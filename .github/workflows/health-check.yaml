@@ -96,7 +96,8 @@ jobs:
       - name: Show disk space
         if: always()
         run: |
-          df -
+          df -h
+
   scenario-test:
     name: scenario-test
     if: ${{ github.event_name == 'pull_request' }}
@@ -119,8 +120,9 @@ jobs:
             gnupg2 \
             lsb-release \
             python3-pip \
-            git
-          pip install --upgrade gdown vcstool
+            git \
+            python3-vcstool
+          pip install --upgrade gdown
 
       - name: Show memory info
         shell: bash
@@ -138,7 +140,7 @@ jobs:
           source /opt/ros/humble/setup.bash
           source /opt/autoware/setup.bash
           rosdep update
-          rosdep install --from-paths src --ignore-src -r -y
+          rosdep install --from-paths src --ignore-src -r -y --skip-keys="python3-vcstool python3-vcs2l"
 
       - name: Downgrade xmlschema
         shell: bash
@@ -237,4 +239,3 @@ jobs:
           pkill -9 -f scenario_test_runner || true
           pkill -9 -f openscenario_interpreter_node || true
           pkill -9 -f python || true
-
