@@ -96,4 +96,145 @@ jobs:
       - name: Show disk space
         if: always()
         run: |
-          df -h
+          df -
+  scenario-test:
+    name: scenario-test
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/autowarefoundation/autoware:universe-devel
+
+    steps:
+      - name: Check out repository (PR code)
+        uses: actions/checkout@v4
+
+      - name: Install required packages
+        shell: bash
+        run: |
+          apt-get update
+          apt-get install -y \
+            unzip \
+            zip \
+            curl \
+            gnupg2 \
+            lsb-release \
+            python3-pip \
+            git
+          pip install --upgrade gdown vcstool
+
+      - name: Show memory info
+        shell: bash
+        run: free -h
+
+      - name: Import simulator.repos
+        shell: bash
+        run: |
+          mkdir -p src
+          vcs import src < simulator.repos
+
+      - name: Install ROS dependencies
+        shell: bash
+        run: |
+          source /opt/ros/humble/setup.bash
+          source /opt/autoware/setup.bash
+          rosdep update
+          rosdep install --from-paths src --ignore-src -r -y
+
+      - name: Downgrade xmlschema
+        shell: bash
+        run: |
+          pip3 install --user xmlschema==3.4.5
+
+      - name: Build Autoware Workspace
+        shell: bash
+        run: |
+          rm -rf build install log
+          source /opt/ros/humble/setup.bash
+          source /opt/autoware/setup.bash
+          export CMAKE_DISABLE_PRECOMPILE_HEADERS=ON
+          colcon build --symlink-install \
+            --cmake-args -DCMAKE_BUILD_TYPE=Release \
+            --executor sequential
+
+      - name: Check Autoware installation
+        shell: bash
+        run: |
+          source install/setup.bash
+          ros2 pkg list | grep autoware
+
+      - name: Download scenario file
+        shell: bash
+        run: |
+          gdown --id 1Tq7snfDPsuPHPtl50aL5fJY6paiC-HxV -O sample-scenario.yaml
+
+      - name: Download sample-map-planning maps
+        shell: bash
+        run: |
+          mkdir -p $HOME/autoware_map
+          gdown --id 1499_nsbUbIeturZaDj7jhUownh5fvXHd -O sample-map-planning.zip
+          unzip sample-map-planning.zip -d $HOME/autoware_map
+
+      - name: Fix paths in sample-scenario.yaml
+        shell: bash
+        run: |
+          sed -i "s@/home/user/@$HOME/@g" sample-scenario.yaml
+
+      - name: Launch scenario_test_runner with diagnostics
+        shell: bash
+        run: |
+          export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+          SCENARIO_FILE="./sample-scenario.yaml"
+          source install/setup.bash
+          if [ -f "$SCENARIO_FILE" ]; then
+            mkdir -p ./results
+            ros2 launch scenario_test_runner scenario_test_runner.launch.py \
+              architecture_type:=awf/universe/20250130 \
+              record:=true \
+              scenario:="$SCENARIO_FILE" \
+              sensor_model:=sample_sensor_kit \
+              vehicle_model:=sample_vehicle \
+              initialize_duration:=300 \
+              output_directory:=./results \
+              simulate_localization:=true \
+              initial_pose:="[0.0, 0.0, 0.0]" \
+              launch_rviz:=false \
+              frame_rate:=1 \
+              disable_lanelet_pose_validation:=true 2>&1 | tee scenario_output.log || true
+          else
+            echo "ERROR: sample-scenario.yaml is missing!"
+            exit 1
+          fi
+
+      - name: Check for Test Failures
+        shell: bash
+        run: |
+          RESULT_FILE="./results/scenario_test_runner/result.junit.xml"
+          if [ ! -f "$RESULT_FILE" ]; then
+            echo "::error::Result file not found! Simulation likely crashed."
+            exit 1
+          fi
+          if grep -q -E '<failure|<error' "$RESULT_FILE"; then
+            echo "::error::Test failures or errors detected."
+            cat "$RESULT_FILE"
+            exit 1
+          fi
+
+      - name: Upload Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scenario-test-results-and-logs
+          path: |
+            ./results/
+            ./scenario_output.log
+            ~/.ros/log/
+
+      - name: Kill lingering ROS nodes (cleanup)
+        if: always()
+        shell: bash
+        run: |
+          pkill -9 -f ros2 || true
+          pkill -9 -f scenario_test_runner || true
+          pkill -9 -f openscenario_interpreter_node || true
+          pkill -9 -f python || true
+
