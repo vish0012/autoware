@@ -171,6 +171,7 @@ jobs:
 
       - name: Download sample-map-planning maps
         shell: bash
+        # cspell: ignore 1499_nsbUbIeturZaDj7jhUownh5fvXHd
         run: |
           mkdir -p $HOME/autoware_map
           gdown --id 1499_nsbUbIeturZaDj7jhUownh5fvXHd -O sample-map-planning.zip
