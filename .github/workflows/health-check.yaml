@@ -35,7 +35,6 @@ jobs:
             platform: amd64
             runner: "['self-hosted','Linux','X64']"
             lib-dir: x86_64
-            container: ubuntu:22.04
           - build-type: nightly
             platform: amd64
             runner: "['ubuntu-24.04']"
@@ -72,11 +71,38 @@ jobs:
 
       - name: Show disk space (before)
         if: always()
-        run: df -h
+        run: |
+          df -h
 
       - name: Free disk space
         if: ${{ steps.changed-files.outputs.any_changed == 'true' && matrix.build-type != 'main' }}
         uses: ./.github/actions/free-disk-space
+
+      # IMPORTANT FIX:
+      # docker-build uses buildkit bind mounts like src/universe/... which do NOT exist after plain checkout.
+      # So i import repos into ./src before running docker build.
+      - name: Prepare src/ for docker build (vcs import)
+        if: ${{ (steps.changed-files.outputs.any_changed == 'true' ||
+          github.event_name == 'schedule' ||
+          github.event_name == 'workflow_dispatch') && matrix.build-type != 'main' }}
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y python3-vcstool git
+
+          mkdir -p src
+
+          # Base repos
+          vcs import --skip-existing src < autoware.repos
+
+          # Nightly extra repos (only if file exists)
+          if [ "${{ matrix.build-type }}" = "nightly" ] && [ -f autoware-nightly.repos ]; then
+            vcs import --skip-existing src < autoware-nightly.repos
+          fi
+
+          # Sanity check (this was the failing path)
+          ls -la src/universe/autoware_universe/tools || true
 
       - name: Build 'Autoware'
         if: ${{ steps.changed-files.outputs.any_changed == 'true' ||
@@ -93,25 +119,23 @@ jobs:
             AUTOWARE_BASE_CUDA_IMAGE=${{ needs.load-env.outputs.autoware_base_cuda_image }}
             LIB_DIR=${{ matrix.lib-dir }}
 
-      # ==========================================================
-      # Scenario test INSIDE docker-build job (NOT a separate job)
-      # Runs only on PR + nightly(amd64) to avoid triple matrix run
-      # Uses the local image tag from docker-build action:
-      #   local/autoware:${{ matrix.platform }}-${{ matrix.build-type }}
-      # ==========================================================
-      - name: Run scenario_test_runner inside built docker image
-        if: ${{ github.event_name == 'pull_request' &&
-          matrix.build-type == 'nightly' &&
-          (steps.changed-files.outputs.any_changed == 'true' ||
-            github.event_name == 'schedule' ||
-            github.event_name == 'workflow_dispatch') }}
+      # 
+      # Scenario test as a STEP inside docker-build (nightly)
+      # Run for PR and workflow_dispatch
+      - name: Run scenario_test_runner inside built docker image (nightly only)
+        if: ${{ matrix.build-type == 'nightly' && (
+              (github.event_name == 'pull_request' && steps.changed-files.outputs.any_changed == 'true')
+              || github.event_name == 'workflow_dispatch'
+            ) }}
         shell: bash
         run: |
-          set -euo pipefail
+          set -euxo pipefail
 
           IMAGE="local/autoware:${{ matrix.platform }}-${{ matrix.build-type }}"
           echo "Using image: ${IMAGE}"
-          docker image ls | head -n 50
+
+          rm -rf ./results
+          mkdir -p ./results
 
           docker run --rm \
             -v "${GITHUB_WORKSPACE}:/workspace" \
@@ -119,23 +143,21 @@ jobs:
             -e RMW_IMPLEMENTATION=rmw_cyclonedds_cpp \
             "${IMAGE}" \
             bash -lc '
-              set -euo pipefail
-
-              # sanity check
-              ros2 --help >/dev/null 2>&1 || (echo "ros2 not found in image" && exit 1)
+              set -euxo pipefail
 
               apt-get update
               apt-get install -y unzip zip curl python3-pip git
               pip3 install --no-cache-dir -U gdown
 
-              # scenario + map
+              # Download scenario + map
               gdown --id 1Tq7snfDPsuPHPtl50aL5fJY6paiC-HxV -O sample-scenario.yaml
+
               mkdir -p "$HOME/autoware_map"
               gdown --id 1499_nsbUbIeturZaDj7jhUownh5fvXHd -O sample-map-planning.zip
               unzip -o sample-map-planning.zip -d "$HOME/autoware_map"
-              sed -i "s@/home/user/@$HOME/@g" sample-scenario.yaml
 
-              mkdir -p ./results
+              # Fix paths in scenario yaml
+              sed -i "s@/home/user/@$HOME/@g" sample-scenario.yaml
 
               ros2 launch scenario_test_runner scenario_test_runner.launch.py \
                 architecture_type:=awf/universe/20250130 \
@@ -165,7 +187,9 @@ jobs:
           fi
 
       - name: Upload scenario artifacts (nightly only)
-        if: ${{ always() && github.event_name == 'pull_request' && matrix.build-type == 'nightly' }}
+        if: ${{ always() && matrix.build-type == 'nightly' && (
+              github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+            ) }}
         uses: actions/upload-artifact@v4
         with:
           name: scenario-test-docker-run-results-and-logs
@@ -175,4 +199,5 @@ jobs:
 
       - name: Show disk space (after)
         if: always()
-        run: df -h
+        run: |
+          df -h
