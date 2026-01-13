@@ -70,14 +70,12 @@ jobs:
             docker/**
             setup-dev-env.sh
 
-      - name: Show disk space
+      - name: Show disk space (before)
         if: always()
-        run: |
-          df -h
+        run: df -h
 
       - name: Free disk space
-        if: ${{ steps.changed-files.outputs.any_changed == 'true' &&
-          matrix.build-type != 'main' }}
+        if: ${{ steps.changed-files.outputs.any_changed == 'true' && matrix.build-type != 'main' }}
         uses: ./.github/actions/free-disk-space
 
       - name: Build 'Autoware'
@@ -96,38 +94,35 @@ jobs:
             LIB_DIR=${{ matrix.lib-dir }}
 
       # ==========================================================
-      # Scenario test (INSIDE docker-build job; NOT a separate job)
-      # Runs only for PR + nightly(amd64) to avoid matrix triple run.
-      # Uses the locally built image tag created by docker-build action:
+      # Scenario test INSIDE docker-build job (NOT a separate job)
+      # Runs only on PR + nightly(amd64) to avoid triple matrix run
+      # Uses the local image tag from docker-build action:
       #   local/autoware:${{ matrix.platform }}-${{ matrix.build-type }}
       # ==========================================================
       - name: Run scenario_test_runner inside built docker image
         if: ${{ github.event_name == 'pull_request' &&
           matrix.build-type == 'nightly' &&
-          steps.changed-files.outputs.any_changed == 'true' }}
+          (steps.changed-files.outputs.any_changed == 'true' ||
+            github.event_name == 'schedule' ||
+            github.event_name == 'workflow_dispatch') }}
         shell: bash
         run: |
-          set -euxo pipefail
+          set -euo pipefail
 
           IMAGE="local/autoware:${{ matrix.platform }}-${{ matrix.build-type }}"
           echo "Using image: ${IMAGE}"
+          docker image ls | head -n 50
 
-          # Fail early if image is missing
-          if ! docker image inspect "${IMAGE}" >/dev/null 2>&1; then
-            echo "::error::Docker image not found: ${IMAGE}"
-            echo "Available images:"
-            docker images || true
-            exit 1
-          fi
-
-          # Run inside the built image. Mount repo so logs/results stay on host.
           docker run --rm \
             -v "${GITHUB_WORKSPACE}:/workspace" \
             -w /workspace \
             -e RMW_IMPLEMENTATION=rmw_cyclonedds_cpp \
             "${IMAGE}" \
             bash -lc '
-              set -euxo pipefail
+              set -euo pipefail
+
+              # sanity check
+              ros2 --help >/dev/null 2>&1 || (echo "ros2 not found in image" && exit 1)
 
               apt-get update
               apt-get install -y unzip zip curl python3-pip git
@@ -158,7 +153,6 @@ jobs:
                 2>&1 | tee /workspace/scenario_output.log || true
             '
 
-          # Pass/fail check
           RESULT_FILE="./results/scenario_test_runner/result.junit.xml"
           if [ ! -f "$RESULT_FILE" ]; then
             echo "::error::Result file not found! Simulation likely crashed."
@@ -170,16 +164,15 @@ jobs:
             exit 1
           fi
 
-      - name: Upload scenario artifacts (docker-build step)
+      - name: Upload scenario artifacts (nightly only)
         if: ${{ always() && github.event_name == 'pull_request' && matrix.build-type == 'nightly' }}
         uses: actions/upload-artifact@v4
         with:
-          name: scenario-test-inside-docker-build-results-and-logs
+          name: scenario-test-docker-run-results-and-logs
           path: |
             ./results/
             ./scenario_output.log
 
-      - name: Show disk space
+      - name: Show disk space (after)
         if: always()
-        run: |
-          df -h
+        run: df -h
