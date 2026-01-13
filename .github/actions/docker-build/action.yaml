@@ -113,5 +113,7 @@ runs:
         file: docker/Dockerfile
         context: .
         push: false
+        tags: local/autoware:${{ inputs.platform }}-${{ inputs.cache-tag-suffix }}
+        load: true
         build-args: ${{ inputs.build-args }}
         cache-from: type=registry,ref=ghcr.io/${{ github.repository }}-buildcache:${{ inputs.platform }}-main
