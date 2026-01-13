@@ -93,6 +93,85 @@ jobs:
             AUTOWARE_BASE_CUDA_IMAGE=${{ needs.load-env.outputs.autoware_base_cuda_image }}
             LIB_DIR=${{ matrix.lib-dir }}
 
+      # =========================
+      # ADDED (minimal change): run scenario_test_runner using the locally built image
+      # NOTE: I try to run only on PR + only on nightly(amd64) GitHub-hosted runner
+      # Because this uses the tag produced by docker-build action:
+      #   local/autoware:${{ matrix.platform }}-${{ matrix.build-type }}
+      # =========================
+      - name: Run scenario_test_runner (docker run local image)
+        if: ${{ github.event_name == 'pull_request' && matrix.build-type == 'nightly' &&
+          (steps.changed-files.outputs.any_changed == 'true' ||
+           github.event_name == 'schedule' ||
+           github.event_name == 'workflow_dispatch') }}
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          IMAGE="local/autoware:${{ matrix.platform }}-${{ matrix.build-type }}"
+          echo "Using image: ${IMAGE}"
+
+          # Run inside the built image. Workspace is mounted so results/logs remain on host.
+          docker run --rm \
+            -v "${GITHUB_WORKSPACE}:/workspace" \
+            -w /workspace \
+            -e RMW_IMPLEMENTATION=rmw_cyclonedds_cpp \
+            "${IMAGE}" \
+            bash -lc '
+              set -euxo pipefail
+
+              apt-get update
+              apt-get install -y unzip zip curl python3-pip git
+              pip3 install --no-cache-dir -U gdown
+
+              # scenario + map
+              gdown --id 1Tq7snfDPsuPHPtl50aL5fJY6paiC-HxV -O sample-scenario.yaml
+              mkdir -p "$HOME/autoware_map"
+              gdown --id 1499_nsbUbIeturZaDj7jhUownh5fvXHd -O sample-map-planning.zip
+              unzip sample-map-planning.zip -d "$HOME/autoware_map"
+              sed -i "s@/home/user/@$HOME/@g" sample-scenario.yaml
+
+              mkdir -p ./results
+
+              ros2 launch scenario_test_runner scenario_test_runner.launch.py \
+                architecture_type:=awf/universe/20250130 \
+                record:=true \
+                scenario:="./sample-scenario.yaml" \
+                sensor_model:=sample_sensor_kit \
+                vehicle_model:=sample_vehicle \
+                initialize_duration:=300 \
+                output_directory:=./results \
+                simulate_localization:=true \
+                initial_pose:="[0.0, 0.0, 0.0]" \
+                launch_rviz:=false \
+                frame_rate:=1 \
+                disable_lanelet_pose_validation:=true \
+                2>&1 | tee /workspace/scenario_output.log || true
+            '
+
+          # Minimal pass/fail check (same logic style as your existing job)
+          RESULT_FILE="./results/scenario_test_runner/result.junit.xml"
+          if [ ! -f "$RESULT_FILE" ]; then
+            echo "::error::Result file not found! Simulation likely crashed."
+            exit 1
+          fi
+          if grep -q -E "<failure|<error" "$RESULT_FILE"; then
+            echo "::error::Test failures or errors detected."
+            cat "$RESULT_FILE"
+            exit 1
+          fi
+
+      # ADDED (optional but useful): upload logs/results from docker-run scenario
+      - name: Upload scenario docker-run artifacts
+        if: ${{ always() && github.event_name == 'pull_request' && matrix.build-type == 'nightly' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: scenario-test-docker-run-results-and-logs
+          path: |
+            ./results/
+            ./scenario_output.log
+      # =========================
+
       - name: Show disk space
         if: always()
         run: |
