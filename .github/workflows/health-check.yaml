@@ -80,22 +80,15 @@ jobs:
           matrix.build-type != 'main' }}
         uses: ./.github/actions/free-disk-space
 
-      # ------------------------------------------------------------
-      # FIX: ubuntu-24.04 runners may NOT have apt package python3-vcstool.
-      # docker-build action internally runs "vcs import", so we ensure
-      # vcstool exists BEFORE calling that action.
-      # ------------------------------------------------------------
-      - name: Install vcstool (pip) for docker-build action
-        if: ${{ (matrix.build-type == 'nightly' || matrix.build-type == 'main-arm64') &&
-          (steps.changed-files.outputs.any_changed == 'true' ||
-           github.event_name == 'schedule' ||
-           github.event_name == 'workflow_dispatch') }}
+      # FIX (minimal): ensure bind-mount source dirs exist so BuildKit doesn't fail
+      - name: Ensure bind-mount directories exist
+        if: ${{ steps.changed-files.outputs.any_changed == 'true' ||
+          github.event_name == 'schedule' ||
+          github.event_name == 'workflow_dispatch' }}
         shell: bash
         run: |
-          set -euxo pipefail
-          sudo apt-get update
-          sudo apt-get install -y python3-pip git
-          pip3 install --no-cache-dir -U vcstool
+          set -eux
+          mkdir -p src/universe/autoware_universe/tools
 
       - name: Build 'Autoware'
         if: ${{ steps.changed-files.outputs.any_changed == 'true' ||
@@ -112,11 +105,9 @@ jobs:
             AUTOWARE_BASE_CUDA_IMAGE=${{ needs.load-env.outputs.autoware_base_cuda_image }}
             LIB_DIR=${{ matrix.lib-dir }}
 
-      # ------------------------------------------------------------
-      # 
-      # ------------------------------------------------------------
+      # Scenario test INSIDE docker-build (nightly) only
       - name: Run scenario_test_runner inside built docker image (nightly only)
-        if: ${{ matrix.build-type == 'nightly' &&
+        if: ${{ matrix.build-type == 'nightly' && matrix.platform == 'amd64' &&
           (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') &&
           (steps.changed-files.outputs.any_changed == 'true' ||
            github.event_name == 'schedule' ||
@@ -127,6 +118,8 @@ jobs:
 
           IMAGE="local/autoware:${{ matrix.platform }}-${{ matrix.build-type }}"
           echo "Using image: ${IMAGE}"
+
+          mkdir -p ./results
 
           docker run --rm \
             -v "${GITHUB_WORKSPACE}:/workspace" \
@@ -140,14 +133,11 @@ jobs:
               apt-get install -y unzip zip curl python3-pip git
               pip3 install --no-cache-dir -U gdown
 
-              # scenario + map
               gdown --id 1Tq7snfDPsuPHPtl50aL5fJY6paiC-HxV -O sample-scenario.yaml
               mkdir -p "$HOME/autoware_map"
               gdown --id 1499_nsbUbIeturZaDj7jhUownh5fvXHd -O sample-map-planning.zip
-              unzip -o sample-map-planning.zip -d "$HOME/autoware_map"
+              unzip sample-map-planning.zip -d "$HOME/autoware_map"
               sed -i "s@/home/user/@$HOME/@g" sample-scenario.yaml
-
-              mkdir -p ./results
 
               ros2 launch scenario_test_runner scenario_test_runner.launch.py \
                 architecture_type:=awf/universe/20250130 \
@@ -177,7 +167,7 @@ jobs:
           fi
 
       - name: Upload scenario artifacts (nightly only)
-        if: ${{ always() && matrix.build-type == 'nightly' &&
+        if: ${{ always() && matrix.build-type == 'nightly' && matrix.platform == 'amd64' &&
           (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') }}
         uses: actions/upload-artifact@v4
         with:
