@@ -29,66 +29,27 @@ runs:
         pipx install vcstool
       shell: bash
 
-    # ------------------------------------------------------------
-    # REFACTOR: trying 
-    # ------------------------------------------------------------
-    - name: Prepare workspace
+    - name: Run vcs import
       run: |
         set -eux
-        rm -rf __vcs_ws src
-        mkdir -p __vcs_ws src
+        rm -rf src
+        mkdir -p src
+        vcs import --shallow src < autoware.repos
+        vcs import --shallow src < extra-packages.repos
       shell: bash
 
-    - name: Run vcs import into temporary workspace
-      run: |
-        set -eux
-        vcs import --shallow __vcs_ws < autoware.repos
-        vcs import --shallow __vcs_ws < extra-packages.repos
-      shell: bash
-
-    - name: Import additional repositories (temporary workspace)
+    - name: Import additional repositories
       if: ${{ inputs.additional-repos != '' }}
       run: |
         set -eux
-        vcs import --shallow --force __vcs_ws < ${{ inputs.additional-repos }}
+        vcs import --shallow --force src < ${{ inputs.additional-repos }}
       shell: bash
 
-    - name: Normalize repository layout to ./src
+    # Critical fix: Dockerfile bind-mount expects this path to exist
+    - name: Ensure expected workspace paths exist
       run: |
         set -eux
-
-        # Case A: repos already checked out into __vcs_ws/src/...
-        if [ -d "__vcs_ws/src" ]; then
-          echo "Detected __vcs_ws/src. Moving its contents into ./src"
-          # Move contents, not the folder itself
-          shopt -s dotglob
-          mv __vcs_ws/src/* src/ || true
-          shopt -u dotglob
-
-        # Case B: repos checked out directly into __vcs_ws/<something...>
-        else
-          echo "No __vcs_ws/src. Moving __vcs_ws contents into ./src"
-          shopt -s dotglob
-          mv __vcs_ws/* src/ || true
-          shopt -u dotglob
-        fi
-
-        # Remove temp workspace
-        rm -rf __vcs_ws
-
-        # Hard validation: these MUST exist for Dockerfile mounts/copies
-        test -d src/universe || (echo "ERROR: src/universe not found after normalization" && exit 1)
-      shell: bash
-
-    - name: Quick sanity print (paths)
-      run: |
-        set -eux
-        echo "=== top of src ==="
-        ls -la src | head -n 100
-        echo "=== check expected path(s) ==="
-        ls -la src/universe/autoware_universe || true
-        ls -la src/universe/autoware_universe/tools || true
-        ls -la src/sensor_component || true
+        mkdir -p src/universe/autoware_universe/tools
       shell: bash
 
     - name: Cache ccache
