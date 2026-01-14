@@ -25,13 +25,13 @@ runs:
     - name: Install vcstool
       run: |
         sudo apt-get -y update
-        sudo apt-get -y install python3-pip
+        sudo apt-get -y install python3-pip pipx
         pipx install vcstool
       shell: bash
 
     - name: Run vcs import
       run: |
-        mkdir src
+        mkdir -p src
         vcs import --shallow src < autoware.repos
         vcs import --shallow src < extra-packages.repos
       shell: bash
@@ -40,6 +40,21 @@ runs:
       if: ${{ inputs.additional-repos != '' }}
       run: |
         vcs import --shallow --force src < ${{ inputs.additional-repos }}
+      shell: bash
+
+    # DEBUG ONLY (no behavior change): helps identify why docker build says
+    # "src/universe/autoware_universe/tools: not found"
+    - name: Debug: show imported universe paths
+      run: |
+        set -eux
+        echo "=== ls src ==="
+        ls -la src || true
+        echo "=== ls src/universe ==="
+        ls -la src/universe || true
+        echo "=== find autoware_universe / autoware.universe dirs (maxdepth 5) ==="
+        find src -maxdepth 5 -type d \( -name 'autoware_universe' -o -name 'autoware.universe' \) -print || true
+        echo "=== check expected tools path ==="
+        ls -la src/universe/autoware_universe/tools || true
       shell: bash
 
     - name: Cache ccache
