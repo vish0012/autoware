@@ -42,21 +42,6 @@ runs:
         vcs import --shallow --force src < ${{ inputs.additional-repos }}
       shell: bash
 
-    # DEBUG ONLY (no behavior change): helps identify why docker build says
-    # "src/universe/autoware_universe/tools: not found"
-    - name: Debug: show imported universe paths
-      run: |
-        set -eux
-        echo "=== ls src ==="
-        ls -la src || true
-        echo "=== ls src/universe ==="
-        ls -la src/universe || true
-        echo "=== find autoware_universe / autoware.universe dirs (maxdepth 5) ==="
-        find src -maxdepth 5 -type d \( -name 'autoware_universe' -o -name 'autoware.universe' \) -print || true
-        echo "=== check expected tools path ==="
-        ls -la src/universe/autoware_universe/tools || true
-      shell: bash
-
     - name: Cache ccache
       uses: actions/cache@v4
       if: ${{ github.ref == 'refs/heads/main'}}
@@ -128,7 +113,7 @@ runs:
         file: docker/Dockerfile
         context: .
         push: false
-        tags: local/autoware:${{ inputs.platform }}-${{ inputs.cache-tag-suffix }}
+        tags: "local/autoware:${{ inputs.platform }}-${{ inputs.cache-tag-suffix }}"
         load: true
         build-args: ${{ inputs.build-args }}
-        cache-from: type=registry,ref=ghcr.io/${{ github.repository }}-buildcache:${{ inputs.platform }}-main
+        cache-from: "type=registry,ref=ghcr.io/${{ github.repository }}-buildcache:${{ inputs.platform }}-main"
