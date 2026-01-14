@@ -31,15 +31,15 @@ runs:
 
     - name: Run vcs import
       run: |
-        mkdir -p src/universe/autoware_universe/tools
-        vcs import --shallow src < autoware.repos
-        vcs import --shallow src < extra-packages.repos
+        mkdir -p src
+        vcs import --shallow < autoware.repos
+        vcs import --shallow < extra-packages.repos
       shell: bash
 
     - name: Import additional repositories
       if: ${{ inputs.additional-repos != '' }}
       run: |
-        vcs import --shallow --force src < ${{ inputs.additional-repos }}
+        vcs import --shallow --force < ${{ inputs.additional-repos }}
       shell: bash
 
     - name: Cache ccache
