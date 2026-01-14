@@ -29,46 +29,31 @@ runs:
         pipx install vcstool
       shell: bash
 
+    # NEW (minimal): decide whether to import into "." or "src"
+    - name: Detect vcs import root
+      id: vcs-root
+      run: |
+        set -euo pipefail
+        # If repos files contain "path: src/...", importing into "src" will create src/src/... (bad).
+        if grep -qE '^[[:space:]]*path:[[:space:]]*src/' autoware.repos extra-packages.repos 2>/dev/null; then
+          echo "root=." >> "$GITHUB_OUTPUT"
+        else
+          echo "root=src" >> "$GITHUB_OUTPUT"
+        fi
+        echo "Using vcs import root: $(cat "$GITHUB_OUTPUT" | sed -n 's/^root=//p')"
+      shell: bash
+
     - name: Run vcs import
       run: |
         mkdir -p src
-        vcs import --shallow src < autoware.repos
-        vcs import --shallow src < extra-packages.repos
+        vcs import --shallow ${{ steps.vcs-root.outputs.root }} < autoware.repos
+        vcs import --shallow ${{ steps.vcs-root.outputs.root }} < extra-packages.repos
       shell: bash
 
     - name: Import additional repositories
       if: ${{ inputs.additional-repos != '' }}
       run: |
-        vcs import --shallow --force src < ${{ inputs.additional-repos }}
-      shell: bash
-
-    # try to ensure Dockerfile bind-mount path exists for universe tools
-    - name: Normalize autoware_universe tools path for Dockerfile
-      run: |
-        set -eux
-
-        # Dockerfile expects this:
-        #   src/universe/autoware_universe/tools
-        # but some checkouts can be:
-        #   src/universe/autoware.universe/tools
-        # or other locations.
-        if [ ! -d src/universe/autoware_universe/tools ]; then
-          mkdir -p src/universe/autoware_universe
-
-          if [ -d src/universe/autoware.universe/tools ]; then
-            ln -s ../autoware.universe/tools src/universe/autoware_universe/tools
-          else
-            # fallback: find any ".../autoware_universe/tools" or ".../autoware.universe/tools"
-            cand="$(find src/universe -maxdepth 5 -type d \( -path '*/autoware_universe/tools' -o -path '*/autoware.universe/tools' \) | head -n 1 || true)"
-            if [ -n "${cand}" ]; then
-              ln -s "$(realpath "${cand}")" src/universe/autoware_universe/tools
-            fi
-          fi
-        fi
-
-        # quick visibility in logs
-        ls -la src/universe/autoware_universe || true
-        ls -la src/universe/autoware_universe/tools || true
+        vcs import --shallow --force ${{ steps.vcs-root.outputs.root }} < ${{ inputs.additional-repos }}
       shell: bash
 
     - name: Cache ccache
