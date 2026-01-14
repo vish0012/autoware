@@ -32,14 +32,51 @@ runs:
     - name: Run vcs import
       run: |
         mkdir -p src
-        vcs import --shallow < autoware.repos
-        vcs import --shallow < extra-packages.repos
+        vcs import --shallow src < autoware.repos
+        vcs import --shallow src < extra-packages.repos
       shell: bash
+
+    # I try normalize folder names/locations so docker/Dockerfile paths exist
+    - name: Normalize src layout for docker/Dockerfile
+      shell: bash
+      run: |
+        set -eux
+
+        # Ensure expected parent dirs exist
+        mkdir -p src/universe src/core src/middleware
+
+        link_if_missing () {
+          target="$1"
+          source="$2"
+          if [ ! -e "$target" ] && [ -d "$source" ]; then
+            ln -s "$(realpath "$source")" "$target"
+          fi
+        }
+
+        # Autoware Universe repo name differences
+        link_if_missing src/universe/autoware_universe src/universe/autoware.universe
+        link_if_missing src/universe/autoware_universe src/autoware_universe
+        link_if_missing src/universe/autoware_universe src/autoware.universe
+
+        # Autoware Core repo name differences
+        link_if_missing src/core/autoware_core src/core/autoware.core
+        link_if_missing src/core/autoware_core src/autoware_core
+        link_if_missing src/core/autoware_core src/autoware.core
+
+        # Launcher repo name differences (if your repos file uses autoware.launcher)
+        link_if_missing src/launcher src/autoware.launcher
+
+        # Sensor component repo name differences (if your repos file uses autoware.sensor_component)
+        link_if_missing src/sensor_component src/autoware.sensor_component
+
+        # Some setups clone external under src/external; Dockerfile expects these:
+        link_if_missing src/universe/external src/external
+        link_if_missing src/middleware/external src/external
 
     - name: Import additional repositories
       if: ${{ inputs.additional-repos != '' }}
       run: |
-        vcs import --shallow --force < ${{ inputs.additional-repos }}
+        vcs import --shallow --force src < ${{ inputs.additional-repos }}
       shell: bash
 
     - name: Cache ccache
@@ -89,7 +126,6 @@ runs:
           apt-get-${{ inputs.platform }}-
 
     - name: Inject cache into docker
-      # TODO(youtalk): Use the release version again
       uses: reproducible-containers/buildkit-cache-dance@7c892679bab8ff382a8c88ab7f973d5e30a8f239
       with:
         utility-image: ghcr.io/containerd/busybox:latest
