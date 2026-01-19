@@ -44,7 +44,9 @@ jobs:
             platform: arm64
             runner: "['ubuntu-24.04-arm']"
             lib-dir: aarch64
+
     runs-on: ${{ fromJson(matrix.runner) }}
+
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -68,7 +70,7 @@ jobs:
             docker/**
             setup-dev-env.sh
 
-      - name: Show disk space
+      - name: Show disk space (before)
         if: always()
         run: |
           df -h
@@ -77,6 +79,16 @@ jobs:
         if: ${{ steps.changed-files.outputs.any_changed == 'true' &&
           matrix.build-type != 'main' }}
         uses: ./.github/actions/free-disk-space
+
+      # FIX (minimal): ensure bind-mount source dirs exist so BuildKit doesn't fail
+      - name: Ensure bind-mount directories exist
+        if: ${{ steps.changed-files.outputs.any_changed == 'true' ||
+          github.event_name == 'schedule' ||
+          github.event_name == 'workflow_dispatch' }}
+        shell: bash
+        run: |
+          set -eux
+          mkdir -p src/universe/autoware_universe/tools
 
       - name: Build 'Autoware'
         if: ${{ steps.changed-files.outputs.any_changed == 'true' ||
@@ -93,7 +105,78 @@ jobs:
             AUTOWARE_BASE_CUDA_IMAGE=${{ needs.load-env.outputs.autoware_base_cuda_image }}
             LIB_DIR=${{ matrix.lib-dir }}
 
-      - name: Show disk space
+      # Scenario test INSIDE docker-build (nightly) only
+      - name: Run scenario_test_runner inside built docker image (nightly only)
+        if: ${{ matrix.build-type == 'nightly' && matrix.platform == 'amd64' &&
+          (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') &&
+          (steps.changed-files.outputs.any_changed == 'true' ||
+           github.event_name == 'schedule' ||
+           github.event_name == 'workflow_dispatch') }}
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          IMAGE="local/autoware:${{ matrix.platform }}-${{ matrix.build-type }}"
+          echo "Using image: ${IMAGE}"
+
+          mkdir -p ./results
+
+          docker run --rm \
+            -v "${GITHUB_WORKSPACE}:/workspace" \
+            -w /workspace \
+            -e RMW_IMPLEMENTATION=rmw_cyclonedds_cpp \
+            "${IMAGE}" \
+            bash -lc '
+              set -euxo pipefail
+
+              apt-get update
+              apt-get install -y unzip zip curl python3-pip git
+              pip3 install --no-cache-dir -U gdown
+
+              gdown --id 1Tq7snfDPsuPHPtl50aL5fJY6paiC-HxV -O sample-scenario.yaml
+              mkdir -p "$HOME/autoware_map"
+              gdown --id 1499_nsbUbIeturZaDj7jhUownh5fvXHd -O sample-map-planning.zip
+              unzip sample-map-planning.zip -d "$HOME/autoware_map"
+              sed -i "s@/home/user/@$HOME/@g" sample-scenario.yaml
+
+              ros2 launch scenario_test_runner scenario_test_runner.launch.py \
+                architecture_type:=awf/universe/20250130 \
+                record:=true \
+                scenario:="./sample-scenario.yaml" \
+                sensor_model:=sample_sensor_kit \
+                vehicle_model:=sample_vehicle \
+                initialize_duration:=300 \
+                output_directory:=./results \
+                simulate_localization:=true \
+                initial_pose:="[0.0, 0.0, 0.0]" \
+                launch_rviz:=false \
+                frame_rate:=1 \
+                disable_lanelet_pose_validation:=true \
+                2>&1 | tee /workspace/scenario_output.log || true
+            '
+
+          RESULT_FILE="./results/scenario_test_runner/result.junit.xml"
+          if [ ! -f "$RESULT_FILE" ]; then
+            echo "::error::Result file not found! Simulation likely crashed."
+            exit 1
+          fi
+          if grep -q -E "<failure|<error" "$RESULT_FILE"; then
+            echo "::error::Test failures or errors detected."
+            cat "$RESULT_FILE"
+            exit 1
+          fi
+
+      - name: Upload scenario artifacts (nightly only)
+        if: ${{ always() && matrix.build-type == 'nightly' && matrix.platform == 'amd64' &&
+          (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: scenario-test-docker-run-results-and-logs
+          path: |
+            ./results/
+            ./scenario_output.log
+
+      - name: Show disk space (after)
         if: always()
         run: |
           df -h
