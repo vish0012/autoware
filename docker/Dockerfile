@@ -221,7 +221,8 @@ RUN --mount=type=cache,target=${CCACHE_DIR} \
   --mount=type=bind,source=src/core/autoware_msgs,target=/autoware/src/core/autoware_msgs \
   --mount=type=bind,source=src/core/autoware_utils,target=/autoware/src/core/autoware_utils \
   source /opt/ros/"$ROS_DISTRO"/setup.bash \
-  && /autoware/build_and_clean.sh ${CCACHE_DIR} /opt/autoware
+  && /autoware/build_and_clean.sh ${CCACHE_DIR} /opt/autoware \
+  && source /opt/autoware/setup.bash
 
 ENTRYPOINT ["/ros_entrypoint.sh"]
 CMD ["/bin/bash"]
@@ -240,7 +241,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
   && /autoware/cleanup_apt.sh
 
 RUN --mount=type=cache,target=${CCACHE_DIR} \
-  --mount=type=bind,source=src/core,target=/autoware/src/core \
+ --mount=type=bind,source=src/core,target=/autoware/src/core \
   source /opt/ros/"$ROS_DISTRO"/setup.bash \
   && /autoware/build_and_clean.sh ${CCACHE_DIR} /opt/autoware
 
