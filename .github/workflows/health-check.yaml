@@ -78,8 +78,7 @@ jobs:
           df -h
 
       - name: Free disk space
-        if: ${{ steps.changed-files.outputs.any_changed == 'true' &&
-          matrix.build-type != 'main' }}
+        if: ${{ matrix.build-type != 'main' }}
         uses: ./.github/actions/free-disk-space
 
       - name: Build 'Autoware'
