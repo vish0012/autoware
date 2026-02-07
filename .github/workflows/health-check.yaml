@@ -131,6 +131,8 @@ jobs:
             autoware:health-check-${{ github.sha }} \
             bash -lc '
               set -e
+              # Enable recommended packages temporarily for complete GCC installation
+              rm -f /etc/apt/apt.conf.d/99-disable-extra-packages
               apt-get update
               apt-get install -y \
                 build-essential gcc g++ \
