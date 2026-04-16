@@ -26,6 +26,8 @@ jobs:
     if: ${{ needs.label-check.outputs.result == 'true' ||
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' }}
+    outputs:
+      main-build-ran: ${{ steps.build-status.outputs.ran }}
     strategy:
       fail-fast: false
       matrix:
@@ -135,12 +137,21 @@ jobs:
             AUTOWARE_BASE_CUDA_IMAGE=${{ steps.derive.outputs.autoware_base_cuda_image }}
             LIB_DIR=${{ matrix.lib-dir }}
 
+      - name: Set main build status
+        id: build-status
+        if: ${{ matrix.build-type == 'main' &&
+          (steps.changed-files.outputs.any_changed == 'true' ||
+          github.event_name == 'schedule' ||
+          github.event_name == 'workflow_dispatch') }}
+        run: echo "ran=true" >> $GITHUB_OUTPUT
+
       - name: Show disk space
         if: always()
         run: |
           df -h
   scenario-test:
     needs: docker-build
+    if: ${{ needs.docker-build.outputs.main-build-ran == 'true' }}
     uses: ./.github/workflows/scenario-test-reusable.yaml
     with:
       autoware_container_image: autoware:health-check-${{ github.sha }}
